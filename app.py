@@ -149,8 +149,23 @@ st.success(f"✓ {file_count} file(s) converted successfully.")
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
 # ── Extract JSON ──────────────────────────────────────────────────────────────
+
+st.markdown("### Downloads")
+st.markdown('<hr class="divider">', unsafe_allow_html=True)
+
+st.markdown("**⬇ Download Markdown**")
+st.download_button(
+    label="Download .md",
+    data=master_text,
+    file_name="extracted.md",
+    mime="text/markdown",
+    use_container_width=False
+)
+
+st.markdown('<hr class="divider">', unsafe_allow_html=True)
 st.markdown("### Extract Structured Data")
 st.markdown('<p class="caption">Click below to run AI extraction and generate your JSON output.</p>', unsafe_allow_html=True)
+
 
 if st.button("⚡ Extract JSON"):
     with st.spinner("Extracting structured data..."):

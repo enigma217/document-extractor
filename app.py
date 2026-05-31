@@ -2,6 +2,7 @@ import streamlit as st
 import tempfile
 import os
 import json
+import fitz  # pymupdf
 from markitdown import MarkItDown
 import google.generativeai as genai
 
@@ -93,7 +94,7 @@ if not uploaded_files:
     st.markdown('<p class="caption">No files uploaded yet. Max 200MB total.</p>', unsafe_allow_html=True)
     st.stop()
 
-# ── Process files to Markdown ─────────────────────────────────────────────────
+# ── Process files ─────────────────────────────────────────────────────────────
 if "master_text" not in st.session_state or st.session_state.get("file_count") != len(uploaded_files):
     md_converter = MarkItDown()
     master_text = ""
@@ -102,22 +103,30 @@ if "master_text" not in st.session_state or st.session_state.get("file_count") !
     with st.spinner("Converting documents..."):
         progress = st.progress(0)
         for i, uploaded_file in enumerate(uploaded_files):
-            suffix = os.path.splitext(uploaded_file.name)[1]
+            suffix = os.path.splitext(uploaded_file.name)[1].lower()
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                 tmp.write(uploaded_file.read())
                 tmp_path = tmp.name
             try:
-                result = md_converter.convert(tmp_path)
-                master_text += f"\n\n## {uploaded_file.name}\n{result.text_content}"
+                if suffix == ".pdf":
+                    doc = fitz.open(tmp_path)
+                    pdf_text = ""
+                    for page in doc:
+                        pdf_text += page.get_text()
+                    doc.close()
+                    master_text += f"\n\n## {uploaded_file.name}\n{pdf_text}"
+                else:
+                    result = md_converter.convert(tmp_path)
+                    master_text += f"\n\n## {uploaded_file.name}\n{result.text_content}"
             except Exception as e:
-                failed.append(uploaded_file.name)
+                failed.append(f"{uploaded_file.name} ({e})")
             finally:
                 os.unlink(tmp_path)
             progress.progress((i + 1) / len(uploaded_files))
 
     st.session_state.master_text = master_text
     st.session_state.file_count = len(uploaded_files)
-    st.session_state.json_data = None  # reset json when new files uploaded
+    st.session_state.json_data = None
     if failed:
         st.warning(f"Could not convert: {', '.join(failed)}")
 
@@ -148,14 +157,10 @@ st.markdown(f"""
 st.success(f"✓ {file_count} file(s) converted successfully.")
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
-# ── Extract JSON ──────────────────────────────────────────────────────────────
-
+# ── MD Download always available ──────────────────────────────────────────────
 st.markdown("### Downloads")
-st.markdown('<hr class="divider">', unsafe_allow_html=True)
-
-st.markdown("**⬇ Download Markdown**")
 st.download_button(
-    label="Download .md",
+    label="⬇ Download Markdown (.md)",
     data=master_text,
     file_name="extracted.md",
     mime="text/markdown",
@@ -163,9 +168,10 @@ st.download_button(
 )
 
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
-st.markdown("### Extract Structured Data")
-st.markdown('<p class="caption">Click below to run AI extraction and generate your JSON output.</p>', unsafe_allow_html=True)
 
+# ── Extract JSON ──────────────────────────────────────────────────────────────
+st.markdown("### Extract Structured JSON")
+st.markdown('<p class="caption">Runs one AI call to extract entities, dates, topics, and figures.</p>', unsafe_allow_html=True)
 
 if st.button("⚡ Extract JSON"):
     with st.spinner("Extracting structured data..."):
@@ -197,7 +203,6 @@ Documents:
         try:
             response = model.generate_content(prompt)
             raw = response.text.strip()
-            # Clean any accidental markdown fences
             raw = raw.replace("```json", "").replace("```", "").strip()
             parsed = json.loads(raw)
             st.session_state.json_data = parsed
@@ -206,34 +211,18 @@ Documents:
         except Exception as e:
             st.error(f"Extraction failed: {e}")
 
-# ── Show results ──────────────────────────────────────────────────────────────
+# ── JSON results ──────────────────────────────────────────────────────────────
 if st.session_state.get("json_data"):
     json_str = json.dumps(st.session_state.json_data, indent=2)
 
-    st.markdown("### Output")
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("**⬇ Download Markdown**")
-        st.download_button(
-            label="Download .md",
-            data=master_text,
-            file_name="extracted.md",
-            mime="text/markdown",
-            use_container_width=True
-        )
-
-    with col2:
-        st.markdown("**⬇ Download JSON**")
-        st.download_button(
-            label="Download .json",
-            data=json_str,
-            file_name="extracted.json",
-            mime="application/json",
-            use_container_width=True
-        )
+    st.download_button(
+        label="⬇ Download JSON (.json)",
+        data=json_str,
+        file_name="extracted.json",
+        mime="application/json",
+        use_container_width=False
+    )
 
     st.markdown("**JSON Preview**")
     st.markdown(f'<div class="json-preview">{json_str}</div>', unsafe_allow_html=True)

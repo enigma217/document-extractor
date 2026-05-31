@@ -1,6 +1,7 @@
 import streamlit as st
 import tempfile
 import os
+import json
 from markitdown import MarkItDown
 import google.generativeai as genai
 
@@ -26,7 +27,7 @@ h2, h3 { font-family: 'DM Sans', sans-serif !important; font-weight: 600 !import
 .metric-box { background: #1c1c21; border: 1px solid #2a2a2e; border-radius: 6px; padding: 0.8rem 1.2rem; flex: 1; text-align: center; }
 .metric-box .value { font-family: 'DM Mono', monospace; font-size: 1.4rem; color: #c8f565; }
 .metric-box .label { font-size: 0.72rem; color: #666; text-transform: uppercase; letter-spacing: 0.08em; margin-top: 2px; }
-.tag { display: inline-block; background: #1e2a14; color: #c8f565; border: 1px solid #3a5020; border-radius: 4px; padding: 2px 10px; font-size: 0.75rem; font-family: 'DM Mono', monospace; margin-right: 6px; }
+.tag { display: inline-block; background: #1e2a14; color: #c8f565; border: 1px solid #3a5020; border-radius: 4px; padding: 2px 10px; font-size: 0.75rem; font-family: 'DM Mono', monospace; margin-right: 6px; margin-bottom: 4px; }
 .divider { border: none; border-top: 1px solid #2a2a2e; margin: 1.5rem 0; }
 [data-testid="stTextInput"] input { background: #1c1c21 !important; border: 1px solid #2a2a2e !important; color: #e8e8e8 !important; border-radius: 6px !important; }
 .stButton > button { background: #c8f565 !important; color: #0e0e11 !important; border: none !important; border-radius: 6px !important; font-family: 'DM Sans', sans-serif !important; font-weight: 600 !important; padding: 0.4rem 1.2rem !important; }
@@ -36,13 +37,14 @@ code { font-family: 'DM Mono', monospace !important; background: #1c1c21 !import
 [data-testid="stExpander"] { background: #16161a !important; border: 1px solid #2a2a2e !important; border-radius: 8px !important; }
 [data-testid="stAlert"] { background: #1c1c21 !important; border: 1px solid #2a2a2e !important; border-radius: 8px !important; }
 .caption { font-size: 0.78rem; color: #555; font-family: 'DM Mono', monospace; }
+.json-preview { background: #1c1c21; border: 1px solid #2a2a2e; border-radius: 8px; padding: 1rem; font-family: 'DM Mono', monospace; font-size: 0.78rem; color: #c8f565; white-space: pre-wrap; max-height: 400px; overflow-y: auto; }
 </style>
 """, unsafe_allow_html=True)
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### ◈ DocumentExtractor")
-    st.markdown('<p class="caption">v1.0 · AI Document Intelligence</p>', unsafe_allow_html=True)
+    st.markdown('<p class="caption">v2.0 · AI Document Intelligence</p>', unsafe_allow_html=True)
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
     api_key = st.secrets.get("GEMINI_API_KEY", None)
@@ -58,12 +60,17 @@ with st.sidebar:
         st.markdown(f'<span class="tag">{fmt}</span>', unsafe_allow_html=True)
 
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
+    st.markdown('<p class="caption">Output</p>', unsafe_allow_html=True)
+    for fmt in ["Markdown .md", "Structured .json"]:
+        st.markdown(f'<span class="tag">{fmt}</span>', unsafe_allow_html=True)
+
+    st.markdown('<hr class="divider">', unsafe_allow_html=True)
     st.markdown('<p class="caption">Built with Streamlit · MarkItDown · Gemini</p>', unsafe_allow_html=True)
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 if not api_key:
     st.markdown("## ◈ DocumentExtractor")
-    st.markdown("##### Extract structure and meaning from any document using AI.")
+    st.markdown("##### Upload documents. Get structured Markdown and JSON.")
     st.markdown('<hr class="divider">', unsafe_allow_html=True)
     st.info("Enter your Gemini API key in the sidebar to get started.")
     st.stop()
@@ -71,12 +78,8 @@ if not api_key:
 genai.configure(api_key=api_key)
 model = genai.GenerativeModel("gemini-2.0-flash")
 
-def ask_gemini(prompt):
-    response = model.generate_content(prompt)
-    return response.text
-
 st.markdown("## ◈ DocumentExtractor")
-st.markdown("##### Upload documents. Extract structure. Ask questions.")
+st.markdown("##### Upload documents. Get structured Markdown and JSON instantly.")
 st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
 # ── Upload ────────────────────────────────────────────────────────────────────
@@ -90,7 +93,7 @@ if not uploaded_files:
     st.markdown('<p class="caption">No files uploaded yet. Max 200MB total.</p>', unsafe_allow_html=True)
     st.stop()
 
-# ── Process ───────────────────────────────────────────────────────────────────
+# ── Process files to Markdown ─────────────────────────────────────────────────
 if "master_text" not in st.session_state or st.session_state.get("file_count") != len(uploaded_files):
     md_converter = MarkItDown()
     master_text = ""
@@ -114,6 +117,7 @@ if "master_text" not in st.session_state or st.session_state.get("file_count") !
 
     st.session_state.master_text = master_text
     st.session_state.file_count = len(uploaded_files)
+    st.session_state.json_data = None  # reset json when new files uploaded
     if failed:
         st.warning(f"Could not convert: {', '.join(failed)}")
 
@@ -141,67 +145,80 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-st.success(f"✓ {file_count} file(s) converted to Markdown successfully.")
+st.success(f"✓ {file_count} file(s) converted successfully.")
+st.markdown('<hr class="divider">', unsafe_allow_html=True)
 
-# ── Tabs ──────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3 = st.tabs(["  🧠 AI Summary  ", "  💬 Ask a Question  ", "  📄 Raw Markdown  "])
+# ── Extract JSON ──────────────────────────────────────────────────────────────
+st.markdown("### Extract Structured Data")
+st.markdown('<p class="caption">Click below to run AI extraction and generate your JSON output.</p>', unsafe_allow_html=True)
 
-with tab1:
-    st.markdown("#### Structured Extraction")
-    st.markdown('<p class="caption">Extracts key topics, dates, names, and numbers from your documents.</p>', unsafe_allow_html=True)
-    if st.button("Generate Summary"):
-        with st.spinner("Analyzing..."):
-            prompt = f"""Analyze these documents and return a clean structured summary with these sections:
+if st.button("⚡ Extract JSON"):
+    with st.spinner("Extracting structured data..."):
+        prompt = f"""You are a document intelligence engine. Extract structured data from the documents below.
 
-**Key Topics** — main subjects covered
-**Important Dates & Deadlines** — any dates mentioned
-**Names, Companies & Projects** — entities found
-**Numbers & Figures** — budgets, quantities, percentages
-**Key Takeaways** — 3 bullet points max
+Return ONLY valid JSON with no explanation, no markdown, no code fences. Just raw JSON.
 
-Documents:
-{master_text[:8000]}"""
-            result = ask_gemini(prompt)
-            st.markdown(result)
+Use this exact structure:
+{{
+  "document_count": <number of source files>,
+  "key_topics": ["topic1", "topic2"],
+  "entities": {{
+    "people": ["name1", "name2"],
+    "organizations": ["org1", "org2"],
+    "locations": ["loc1", "loc2"],
+    "projects": ["project1", "project2"]
+  }},
+  "dates_and_deadlines": ["date1", "date2"],
+  "financial_figures": ["figure1", "figure2"],
+  "key_numbers": ["stat1", "stat2"],
+  "summary": "2-3 sentence summary of all documents combined"
+}}
 
-with tab2:
-    st.markdown("#### Document Q&A")
-    st.markdown('<p class="caption">Ask anything. The AI answers using only your uploaded documents.</p>', unsafe_allow_html=True)
-
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
-
-    for msg in st.session_state.chat_history:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
-
-    user_question = st.chat_input("Ask a question about your documents...")
-    if user_question:
-        st.session_state.chat_history.append({"role": "user", "content": user_question})
-        with st.chat_message("user"):
-            st.markdown(user_question)
-
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                qa_prompt = f"""Answer this question using ONLY the document content below.
-If the answer is not found in the documents, say exactly: "This information is not in the uploaded documents."
-Be concise and precise.
-
-Question: {user_question}
+If a field has no data, use an empty array [].
 
 Documents:
 {master_text[:8000]}"""
-                answer = ask_gemini(qa_prompt)
-                st.markdown(answer)
-                st.session_state.chat_history.append({"role": "assistant", "content": answer})
 
-with tab3:
-    st.markdown("#### Extracted Markdown")
-    st.download_button(
-        "⬇ Download .md file",
-        master_text,
-        file_name="extracted.md",
-        mime="text/markdown"
-    )
-    with st.expander("Preview extracted content"):
-        st.markdown(f"```\n{master_text[:3000]}{'...' if len(master_text) > 3000 else ''}\n```")
+        try:
+            response = model.generate_content(prompt)
+            raw = response.text.strip()
+            # Clean any accidental markdown fences
+            raw = raw.replace("```json", "").replace("```", "").strip()
+            parsed = json.loads(raw)
+            st.session_state.json_data = parsed
+        except json.JSONDecodeError:
+            st.session_state.json_data = {"raw_output": raw}
+        except Exception as e:
+            st.error(f"Extraction failed: {e}")
+
+# ── Show results ──────────────────────────────────────────────────────────────
+if st.session_state.get("json_data"):
+    json_str = json.dumps(st.session_state.json_data, indent=2)
+
+    st.markdown("### Output")
+    st.markdown('<hr class="divider">', unsafe_allow_html=True)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**⬇ Download Markdown**")
+        st.download_button(
+            label="Download .md",
+            data=master_text,
+            file_name="extracted.md",
+            mime="text/markdown",
+            use_container_width=True
+        )
+
+    with col2:
+        st.markdown("**⬇ Download JSON**")
+        st.download_button(
+            label="Download .json",
+            data=json_str,
+            file_name="extracted.json",
+            mime="application/json",
+            use_container_width=True
+        )
+
+    st.markdown("**JSON Preview**")
+    st.markdown(f'<div class="json-preview">{json_str}</div>', unsafe_allow_html=True)
